@@ -19,7 +19,7 @@ import logging
 from bson.son import SON
 
 import helpers
-import message
+import message as message_factory
 import functools
 
 _QUERY_OPTIONS = {
@@ -114,15 +114,12 @@ class Cursor(object):
         if callback:
             callback = functools.partial(self._handle_response, orig_callback=callback)
 
-        connection = self.__pool.connection()
-        try:
-            connection.send_message(
-                message.insert(self.full_collection_name, docs,
-                    check_keys, safe, kwargs), callback=callback)
-        except:
-            connection.close()
-            raise
-    
+        message = message_factory.insert(self.full_collection_name, docs,
+                    check_keys, safe, kwargs)
+        connection_callback = functools.partial(self._send_message,
+                message=message, callback=callback)
+        self.__pool.connection(connection_callback)
+
     def remove(self, spec_or_id=None, safe=True, callback=None, **kwargs):
         if not isinstance(safe, bool):
             raise TypeError("safe must be an instance of bool")
@@ -144,16 +141,12 @@ class Cursor(object):
         if callback:
             callback = functools.partial(self._handle_response, orig_callback=callback)
 
-        connection = self.__pool.connection()
-        try:
-            connection.send_message(
-                message.delete(self.full_collection_name, spec_or_id, safe, kwargs),
-                    callback=callback)
-        except:
-            connection.close()
-            raise
+        message = message_factory.delete(self.full_collection_name,
+                spec_or_id, safe, kwargs)
+        connection_callback = functools.partial(self._send_message,
+                message=message, callback=callback)
+        self.__pool.connection(connection_callback)
 
-    
     def update(self, spec, document, upsert=False, manipulate=False,
                safe=True, multi=False, callback=None, **kwargs):
         """Update a document(s) in this collection.
@@ -230,32 +223,28 @@ class Cursor(object):
         # TODO: apply SON manipulators
         # if upsert and manipulate:
         #     document = self.__database._fix_incoming(document, self)
-        
+
         if kwargs:
             safe = True
-        
+
         if safe and not callable(callback):
             raise TypeError("callback must be callable")
         if not safe and callback is not None:
             raise TypeError("callback can not be used with safe=False")
-        
+
         if callback:
             callback = functools.partial(self._handle_response, orig_callback=callback)
 
         self.__limit = None
-        connection = self.__pool.connection()
-        try:
-            connection.send_message(
-                message.update(self.full_collection_name, upsert, multi,
-                    spec, document, safe, kwargs), callback=callback)
-        except:
-            connection.close()
-            raise
+        message = message_factory.update(self.full_collection_name, upsert,
+                multi, spec, document, safe, kwargs)
+        connection_callback = functools.partial(self._send_message,
+                message=message, callback=callback)
+        self.__pool.connection(connection_callback)
 
-    
     def find_one(self, spec_or_id, **kwargs):
         """Get a single document from the database.
-        
+
         All arguments to :meth:`find` are also valid arguments for
         :meth:`find_one`, although any `limit` argument will be
         ignored. Returns a single document, or ``None`` if no matching
@@ -358,7 +347,7 @@ class Cursor(object):
         self.__skip = skip
         self.__limit = limit
         self.__batch_size = 0
-        
+
         self.__timeout = timeout
         self.__tailable = tailable
         self.__snapshot = snapshot
@@ -371,14 +360,21 @@ class Cursor(object):
         self.__tz_aware = False #collection.database.connection.tz_aware
         self.__must_use_master = _must_use_master
         self.__is_command = _is_command
-        
-        connection = self.__pool.connection()
+
+        message = message_factory.query(self.__query_options(),
+                self.full_collection_name, self.__skip, self.__limit,
+                self.__query_spec(), self.__fields)
+        message_callback = functools.partial(self._handle_response,
+                orig_callback=callback)
+        connection_callback = functools.partial(self._send_message,
+                message=message, callback=message_callback)
+        self.__pool.connection(connection_callback)
+
+    def _send_message(self, connection, message, callback=None, error=None):
+        if error:
+            raise error
         try:
-            connection.send_message(
-                message.query(self.__query_options(),
-                              self.full_collection_name,
-                              self.__skip, self.__limit,
-                              self.__query_spec(), self.__fields), callback=functools.partial(self._handle_response, orig_callback=callback))
+            connection.send_message(message, callback)
         except:
             connection.close()
     

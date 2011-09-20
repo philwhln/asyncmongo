@@ -18,6 +18,9 @@ from threading import Condition
 import logging
 from errors import TooManyConnections, ProgrammingError
 from connection import Connection
+from pymongo import uri_parser
+from bson.son import SON
+
 
 class ConnectionPools(object):
     """ singleton to keep track of named connection pools """
@@ -61,6 +64,8 @@ class ConnectionPool(object):
     
     """
     def __init__(self, 
+                host=None, 
+                port=27017, 
                 mincached=0, 
                 maxcached=0, 
                 maxconnections=0, 
@@ -68,12 +73,19 @@ class ConnectionPool(object):
                 dbname=None, 
                 slave_okay=False, 
                 *args, **kwargs):
+
+        if isinstance(host, basestring):
+            host = [host]
+        else:
+            assert isinstance(host, list)
+        assert isinstance(port, int)
         assert isinstance(mincached, int)
         assert isinstance(maxcached, int)
         assert isinstance(maxconnections, int)
         assert isinstance(maxusage, int)
         assert isinstance(dbname, (str, unicode, None.__class__))
         assert isinstance(slave_okay, bool)
+
         if mincached and maxcached:
             assert mincached <= maxcached
         if maxconnections:
@@ -86,36 +98,62 @@ class ConnectionPool(object):
         self._maxconnections = maxconnections
         self._idle_cache = [] # the actual connections that can be used
         self._condition = Condition()
-        self._dbname = dbname
-        self._slave_okay = slave_okay
+        self._kwargs['slave_okay'] = self._slave_okay = slave_okay
         self._connections = 0
-        
+
+        nodes = set()
+        username = None  # TODO: username/password ignored for now
+        password = None
+        for entity in host:
+            if "://" in entity:
+                if entity.startswith("mongodb://"):
+                    res = uri_parser.parse_uri(entity, port)
+                    nodes.update(res["nodelist"])
+                    username = res["username"] or username
+                    password = res["password"] or password
+                    dbname = res["database"] or dbname
+                else:
+                    idx = entity.find("://")
+                    raise ProgrammingError("Invalid URI scheme: "
+                                     "%s" % (entity[:idx],))
+            else:
+                nodes.update(uri_parser.split_hosts(entity, port))
+        if not nodes:
+            raise ProgrammingError("Need to specify at least one host")
+        self._nodes = nodes
+        self._dbname = dbname
+
         # Establish an initial number of idle database connections:
         idle = [self.connection() for i in range(mincached)]
         while idle:
             self.cache(idle.pop())
-    
-    def new_connection(self):
+
+    def new_connection(self, callback):
         kwargs = self._kwargs
         kwargs['pool'] = self
-        return Connection(*self._args, **kwargs)
-    
-    def connection(self):
+        return Connection(*self._args, nodes=self._nodes,
+                create_callback=callback, **kwargs)
+
+    def connection(self, callback):
         """ get a cached connection from the pool """
-        
+
+        con = None
         self._condition.acquire()
         try:
             if (self._maxconnections and self._connections >= self._maxconnections):
-                raise TooManyConnections("%d connections are active greater than max: %d" % (self._connections, self._maxconnections))
+                raise TooManyConnections("%d connections are active greater "
+                        "than max: %d" % (self._connections, self._maxconnections))
             # connection limit not reached, get a dedicated connection
             try: # first try to get it from the idle cache
                 con = self._idle_cache.pop(0)
-            except IndexError: # else get a fresh connection
-                con = self.new_connection()
+            except IndexError: # else get a fresh connection, async
+                self.new_connection(callback)
             self._connections += 1
         finally:
             self._condition.release()
-        return con
+        # reusing a connection, so send it to the callback
+        if con:
+            callback(con)
 
     def cache(self, con):
         """Put a dedicated connection back into the idle cache."""
@@ -167,3 +205,9 @@ class ConnectionPool(object):
         self._slave_okay = value
 
     slave_okay = property(__get_slave_okay, __set_slave_okay)
+
+    def command(self, command, value=1, **kwargs):
+        if isinstance(command, basestring):
+            command = SON([(command, value)])
+
+        self["$cmd"].find_one(command, _is_command=True, **kwargs)

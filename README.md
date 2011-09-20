@@ -49,7 +49,7 @@ Requirements
 ------------
 The following two python libraries are required
 
-* [pymongo](http://github.com/mongodb/mongo-python-driver) version 1.9+ for bson library
+* [pymongo](http://github.com/mongodb/mongo-python-driver) version 2.0+ for bson library and uri_parse
 * [tornado](http://github.com/facebook/tornado)
 
 Issues

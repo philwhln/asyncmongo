@@ -18,7 +18,7 @@ setup(
         "License :: OSI Approved :: Apache Software License",
     ],
     packages=['asyncmongo'],
-    install_requires=['pymongo>=1.9', 'tornado'],
-    requires=['pymongo (>=1.9)', 'tornado'],
+    install_requires=['pymongo>=2.0', 'tornado'],
+    requires=['pymongo (>=2.0)', 'tornado'],
     download_url="http://github.com/downloads/bitly/asyncmongo/asyncmongo-%s.tar.gz" % version,
 )
