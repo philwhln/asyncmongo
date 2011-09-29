@@ -177,8 +177,7 @@ class Connection(object):
         except KeyError:
             if state.tested_all_seeds:
                 # We have failed to find a node...
-                error = InterfaceError(', '.join(state.errors))
-                self.__create_callback(None, error=error)
+                raise _NoNodeFound(', '.join(state.errors))
             else:
                 # No luck with seeds; let's see if we discovered a new node
                 state.tested_all_seeds = True
@@ -193,6 +192,8 @@ class Connection(object):
             yield
         except _NodeFound:
             callback(self)
+        except _NoNodeFound, why:
+            callback(None, error=why)
         except Exception, why:
             state.errors.append(str(why))
             self.__find_node(state)
@@ -312,6 +313,10 @@ class _NodeFound(StandardError):
     def __init__(self, node):
         super(_NodeFound, self).__init__('Node %s:%d' % node)
         self.node = node
+
+
+class _NoNodeFound(StandardError):
+    pass
 
 
 def _partition_node(node):
