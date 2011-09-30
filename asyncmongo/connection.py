@@ -194,7 +194,7 @@ class Connection(object):
             callback(self)
         except _NoNodeFound, why:
             callback(None, error=why)
-        except Exception, why:
+        except InterfaceError, why:
             state.errors.append(str(why))
             self.__find_node(state)
 
