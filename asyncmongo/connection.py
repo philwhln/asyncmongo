@@ -101,7 +101,8 @@ class Connection(object):
         Based on pymongo.Connection.__try_node
         """
         if self.__alive:
-            self.close()
+            # Close socket connection, but do not return to the connection object to the pool
+            self._close()
         self.__host, self.__port = node
         self.__socket_connect()
 

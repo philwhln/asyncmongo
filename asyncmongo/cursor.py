@@ -375,7 +375,8 @@ class Cursor(object):
             raise error
         try:
             connection.send_message(message, callback)
-        except:
+        except Exception, e:
+            logging.error("cursor._send_message failed : " + str(e) + " : message = " + str(message))
             connection.close()
     
     def _handle_response(self, result, error=None, orig_callback=None):
