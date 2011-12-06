@@ -112,7 +112,7 @@ class Connection(object):
                 num_to_return=-1,
                 query=SON([('ismaster', 1)]))
         self.send_message(command,
-            callback=functools.partial(self.__handle_ismaster, node=node))
+            callback=functools.partial(self.__handle_ismaster, node=node), checking_master=True)
 
     def __handle_ismaster(self, result, error=None, node=None):
         if error:
@@ -224,7 +224,7 @@ class Connection(object):
         self._close()
         self.__pool.cache(self)
     
-    def send_message(self, message, callback):
+    def send_message(self, message, callback, checking_master=False):
         """ send a message over the wire; callback=None indicates a safe=False call where we write and forget about it"""
         
         self.usage_count +=1
@@ -234,7 +234,7 @@ class Connection(object):
         
         if not self.__alive:
             if self.__autoreconnect:
-                # logging.warn('connection lost, reconnecting')
+                logging.warn('connection lost, reconnecting')
                 self.__connect(functools.partial(Connection.send_message,
                     message=message, callback=callback))
                 return
@@ -248,7 +248,7 @@ class Connection(object):
         try:
             self.__stream.write(data)
             if callback:
-                self.__stream.read_bytes(16, callback=self._parse_header)
+                self.__stream.read_bytes(16, callback=functools.partial(self._parse_header, checking_master))
             else:
                 self.__request_id = None
                 self.__pool.cache(self)
@@ -258,7 +258,7 @@ class Connection(object):
             raise
         # return self.__request_id 
     
-    def _parse_header(self, header):
+    def _parse_header(self, checking_master, header):
         # return self.__receive_data_on_socket(length - 16, sock)
         # logging.info('got data %r' % header)
         length = int(struct.unpack("<i", header[:4])[0])
@@ -271,18 +271,20 @@ class Connection(object):
         # logging.info('%s' % length)
         # logging.info('waiting for another %d bytes' % length - 16)
         try:
-            self.__stream.read_bytes(length - 16, callback=self._parse_response)
+            self.__stream.read_bytes(length - 16, callback=functools.partial(self._parse_response, checking_master))
         except IOError, e:
             self.__alive = False
             raise
     
-    def _parse_response(self, response):
+    def _parse_response(self, checking_master, response):
         # logging.info('got data %r' % response)
         callback = self.__callback
         request_id = self.__request_id
         self.__request_id = None
         self.__callback = None
-        self.__pool.cache(self)
+
+        if not checking_master:
+            self.__pool.cache(self)
         
         try:
             response = helpers._unpack_response(response, request_id) # TODO: pass tz_awar
